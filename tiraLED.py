@@ -2,7 +2,7 @@ import machine
 import time
 import ustruct
 import sys
-import uasyncio 
+import asyncio 
 import queue
 
 
@@ -14,73 +14,66 @@ RES = 50e-6 #sec
 
 
 class LED_Strip:
-    def __init__(self, port, LED_NUM) -> None:
-        self.lock = uasyncio.Lock()
+    def __init__(self, port, LED_NUM, refreshRate) -> None:
+        self.stop = asyncio.Event()
+        self.refreshRate = refreshRate
+        self.lock = asyncio.Lock()
         self.ledData = [(0,0,0) for _ in range(LED_NUM)] 
-        self.queue = queue.Queue(LED_NUM)
-        WS2812B_LS = WS2812B_LED_Strip(port, self.queue, self.lock, self.ledData)
-        IO_Manager = WS2812B(port, self.lock, self.ledData)
+        self.queue = asyncio.Queue(LED_NUM)
+        self.WS2812B = WS2812B(port, self.lock, self.ledData)
+        
         
     
-    async def main(self):
-        uasyncio.create_task(self.__dequeue())
+    async def run(self):
+        self.end.acquire()
+        dequeue = asyncio.create_task(self.__dequeue())
+        updateLedTime = max(T0H + T0L, T1H + T1L) * len(self.ledData) + RES
+        refreshPeriode = max(1/self.refreshRate, updateLedTime)
+        update_io = asyncio.create_task(self.WS2812B.update(), refreshPeriode - updateLedTime)
+        
+        await self.stop.wait()
+        
+        dequeue.terminate()
+        update_io.terminate()
+        
+        self.stop.clear()
+        
+        
+        
+    def stop(self):
+        self.stop.set()
+    
+    def enQueue(self, data):
+        
         
     
     async def __dequeue(self):
-        await self.lock.release()
-        while not self.queue.empty():
-            index, data = self.queue.get()
-            self.ledData[index] = data
-        await self.lock.acquire()
+        while not self.end:
+            await self.lock.release()
+            while not self.queue.empty():
+                index, data = self.queue.get()
+                self.ledData[index] = data
+            await self.lock.acquire()
         
         
-        
-
-
-class WS2812B_LED_Strip:
-    def __init__(self, port, queue, lock, ledData) -> None:
-        self.port = port
-        self.queue = queue
-        self.lock = lock
-        self.__StateLEDs = ledData
-        self.Pin = machine.Pin(port, machine.Pin.OUT)
-
-    
-    def setRGB_LED(self, NumLED, State):
-        #State (R, G, B)
-        if NumLED >= len(self.__StateLEDs):
-            raise IndexError
-        self.queue.put((NumLED, State))
-        
-    
-    def run(self):
-        pass
-    
-    
-    def stop(self):
-        pass
-    
-
 class WS2812B:
     def __init__(self, port, lock, dataLED) -> None:
         self.port = port
         self.locl = lock
         self.dataLED = dataLED
             
-    def __portState(self, state):
+    async def __portState(self, state):
         match state:
             case '0':
                 self.port.value(1)
-                time.sleep(T0H)
+                await asyncio.sleep(T0H)
                 self.port.value(0)
-                time.sleep(T0L)
+                await asyncio.sleep(T0L)
             case '1':
                 self.port.value(1)
-                time.sleep(T1H)
+                await asyncio.sleep(T1H)
                 self.port.value(0)
-                time.sleep(T1L)
-            case 'RES':
-                time.sleep(RES)
+                await asyncio.sleep(T1L)
             case _:
                 raise KeyError
     
@@ -96,7 +89,7 @@ class WS2812B:
         for bit in byte:
             self.__portState(bit)
         
-    async def update(self):
+    async def update(self, refreshRate):
         self.lock.acquire()
         for RGB in self.dataLED:
             R, G, B = RGB
@@ -104,7 +97,7 @@ class WS2812B:
             self.writeByte(R)
             self.writeByte(B)
         self.lock.release()
-        self.__portState('RES')
+        await asyncio.sleep(refreshRate + RES)
             
                 
         
