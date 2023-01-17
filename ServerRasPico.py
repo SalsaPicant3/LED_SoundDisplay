@@ -1,7 +1,7 @@
 from machine import Pin, Timer
 import network
 import time
-import usocket
+import usocket as socket
 
 SSID = 'MOVISTAR_F9CC'
 SSID_KEY = 'v4vQiV5JKLQB5oVUd2rk'
@@ -41,19 +41,27 @@ class StatusLed:
             self.pin.high()
 
 
-class Client:
+class Server:
     def __init__(self) -> None:
-        self.sock = usocket.socket(usocket.AF_INET, usocket.SOCK_STREAM)
+        self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        # Bind the socket to the port
+        server_address = ('192.168.1.40', 8002)
+        print('starting up on {} port {}'.format(*server_address))
+        self.sock.bind(server_address)
+        self.sock.listen(1)
 
-        # Connect the socket to the port where the server is listening
-        server_address = ('192.168.1.35', 8001)
-        self.sock.connect(server_address)
-
-    def getLED_Amp(self):
+    def getLED_Amp(self, reciveCb):
         # Send data
-        self.sock.sendall('LEDs')
-        # Look for the response
-        return int(self.sock.recv(16))
+        self.connection, client_address = self.sock.accept()
+        while True:
+            # Wait for a connection
+            buffer = self.connection.recv(16)
+            if len(buffer) == 0:
+                continue
+            b12 = buffer.decode()
+            ledsAmp = [int(s, 12) for s in b12]
+            reciveCb(ledsAmp)
 
 
 def main():
@@ -61,7 +69,7 @@ def main():
     wlan.connect(SSID, SSID_KEY)
 
     statusHandler = StatusLed()
-    client = Client()
+    server = Server()
 
     while True:
         if not wlan.isconnected():
@@ -72,8 +80,7 @@ def main():
                   callback=lambda t: wlanConnectCB(wlan, statusHandler))
             continue
         statusHandler.setStatus(StatusLed.CONNECTED)
-        print(f'Server:{client.getLED_Amp()}')
-        time.sleep(1/30)
+        print(f'Server:{server.getLED_Amp()}')
 
 
 main()

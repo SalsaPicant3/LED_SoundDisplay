@@ -8,6 +8,10 @@
     "python.analysis.extraPaths": [
         ".vscode\\Pico-W-Stub\\stubs"
     ],
+    "python.analysis.diagnosticSeverityOverrides": {
+        "reportGeneralTypeIssues": "none"
+    }
+    ,
     "picowgo.syncFolder": "",
     "picowgo.openOnStart": true
 }
