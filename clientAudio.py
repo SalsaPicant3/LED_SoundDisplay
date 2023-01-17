@@ -7,10 +7,11 @@ import socket
 
 FORMAT = pyaudio.paInt16
 x = 0
+MAX_Amp = 6e4
 
 
 def listToBaseTwelf(l: list):
-    return ''.join([hex(i).replace('0x', '') for i in l])
+    return ''.join([hex(min(round(i), 11)).replace('0x', '') for i in l])
 
 
 def CalcFFT(data, nBars, maxIndex, sock):
@@ -21,8 +22,8 @@ def CalcFFT(data, nBars, maxIndex, sock):
     fftData = fftData[:fftData.shape[0]//2+1]
     splitIndex = np.geomspace(1, maxIndex, nBars, dtype=np.int16)
     splitedFFT = np.split(fftData, splitIndex)
-    avgFFT = np.array([np.mean(i) for i in splitedFFT[1:]])
-    sock.sendall(listToBaseTwelf([i for i in range(12)]).encode())
+    avgFFT = np.array([np.max(i) for i in splitedFFT[1:]])/MAX_Amp
+    sock.sendall(listToBaseTwelf(avgFFT).encode())
     print("took %.02f ms" % ((time.time()-t1)*1000))
 
 
@@ -79,11 +80,11 @@ if __name__ == "__main__":
         CHANNELS = default_speakers["maxInputChannels"]
         RATE = int(default_speakers["defaultSampleRate"])
         frames_per_buffer = pyaudio.get_sample_size(pyaudio.paInt16)
-        READ_FREQUENCY = 50
+        READ_FREQUENCY = 10
         CHUNK = RATE // READ_FREQUENCY  # RATE / number of updates per second
-        RECORD_SECONDS = 2
+        RECORD_SECONDS = 200
         nBars = 10
-        fMax = 10e3
+        fMax = 6e3
         maxIndex = (CHUNK * fMax) // RATE
 
         stream = p.open(format=pyaudio.paInt16, channels=CHANNELS, rate=RATE, input=True,

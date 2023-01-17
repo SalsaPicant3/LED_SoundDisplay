@@ -37,13 +37,14 @@ def soundPlot(stream, ax1, ax2, ax3, CHUNK, RATE):
     ax1.grid()
     ax1.axis([0, CHUNK, -5000, 5000])
     fftData = np.abs(np.fft.rfft(indata))  # Max freq es CHUNK
-    fftTime = np.fft.rfftfreq(CHUNK*2, 1./RATE)
+    fftData = fftData[:fftData.shape[0]//2+1]
+    fftTime = np.fft.rfftfreq(CHUNK, 1./RATE)
     print(fftTime[-1])
     # Plot frequency domain graph
     ax2.cla()
     ax2.plot(fftTime, fftData)
     ax2.grid()
-    ax2.axis([0, fftTime[-1], 0, 10**6])
+    ax2.axis([0, 6000, 0, 10**6])
     plt.pause(0.0001)
     print("took %.02f ms" % ((time.time()-t1)*1000))
 

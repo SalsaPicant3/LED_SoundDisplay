@@ -1,3 +1,6 @@
 from machine import Pin
-l = Pin(7, Pin.OUT)
-l.high()
+import time
+l = Pin(6, Pin.OUT)
+while True:
+    l.toggle()
+    time.sleep(1)
