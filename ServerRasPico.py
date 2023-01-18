@@ -5,10 +5,10 @@ import usocket as socket
 import array
 import rp2
 
-SSID = 'MOVISTAR_F9CC'
-SSID_KEY = 'v4vQiV5JKLQB5oVUd2rk'
+
 LED_COL = 10
 LED_AMP = 12
+LED_REFRESH_FREQ = 20
 
 
 @rp2.asm_pio(sideset_init=rp2.PIO.OUT_LOW, out_shiftdir=rp2.PIO.SHIFT_LEFT, autopull=True, pull_thresh=24)
@@ -100,15 +100,19 @@ class ws2812b:
         time.sleep(self.delay)
 
 
-def initWifi() -> network.WLAN:
-    wlan = network.WLAN(network.STA_IF)
-    wlan.active(True)
-    return wlan
+class Wifi:
+    def __init__(self) -> None:
+        self.wlan = network.WLAN(network.STA_IF)
+        self.wlan.active(True)
 
+    def connect(self):
+        SSID = 'MOVISTAR_F9CC'
+        SSID_KEY = 'v4vQiV5JKLQB5oVUd2rk'
+        self.wlan.connect(SSID, SSID_KEY)
+        return self.isconnected()
 
-def wlanConnectCB(wlan, statusHandler):
-    statusHandler.setStatus(StatusLed.NOT_CONNECTED)
-    wlan.connect(SSID, SSID_KEY)
+    def isconnected(self):
+        return self.wlan.isconnected()
 
 
 class LED_Strip:
@@ -119,7 +123,6 @@ class LED_Strip:
         self.strip.show()
 
     def AmplitudesToLEDs(self, a: list) -> None:
-        print(a)
         for j in range(LED_COL):
             amp = a[j]
             for led in range(LED_AMP):
@@ -128,74 +131,127 @@ class LED_Strip:
                     self.strip.set_pixel(iRow + j * LED_AMP, 30, 0, 0)
                 else:
                     self.strip.set_pixel(iRow + j * LED_AMP, 0, 0, 0)
+
+    def statusCONNECTED_CB(self):
         self.strip.show()
 
 
 class StatusLed:
-    NOT_CONNECTED = 0
-    CONNECTING = 1
+    NO_WIFI = 0
+    NO_SOCKET = 1
     CONNECTED = 2
 
     def __init__(self) -> None:
         self.pin = Pin('LED', Pin.OUT)
-        self.status = StatusLed.NOT_CONNECTED
+        self.status = StatusLed.NO_WIFI
         Timer(period=500, mode=Timer.PERIODIC,
               callback=lambda t: self.__statusCB())
+        self.cbFunc = list()
+        Timer(period=1000//LED_REFRESH_FREQ, mode=Timer.PERIODIC,
+              callback=lambda t: self.__functionCB())
 
     def setStatus(self, status: int):
         self.status = status
 
+    def setCBfunc(self, state, func):
+        self.cbFunc.append((state, func))
+
+    def __functionCB(self):
+        for state, funct in self.cbFunc:
+            if state == self.status:
+                funct()
+
     def __statusCB(self):
-        if self.status == StatusLed.NOT_CONNECTED:
+        if self.status == StatusLed.NO_WIFI:
             self.pin.low()
-        elif self.status == StatusLed.CONNECTING:
+        elif self.status == StatusLed.NO_SOCKET:
             self.pin.toggle()
         elif self.status == StatusLed.CONNECTED:
             self.pin.high()
 
 
 class Server:
+    WAITING_CONNECTION_TIMEOUT = 1  # Seconds
+    CLIENT_DATA_TIMEOUT = 2000  # ms
+    ADDRESS = ('192.168.1.40', 8002)
+
     def __init__(self) -> None:
+        self.sock = None
+        self.clientTimer = None
+
+    def createSocket(self):
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        # Bind the socket to the port
-        server_address = ('192.168.1.40', 8002)
-        print('starting up on {} port {}'.format(*server_address))
-        self.sock.bind(server_address)
+        self.sock.settimeout(Server.WAITING_CONNECTION_TIMEOUT)
+        self.sock.bind(Server.ADDRESS)
         self.sock.listen(1)
+        self.oldTime = time.ticks_ms()
 
-    def getLED_Amp(self, reciveCb):
-        # Send data
-        self.connection, client_address = self.sock.accept()
-        while True:
-            # Wait for a connection
+    def closeSocket(self):
+        if self.sock is not None:
+            self.sock.close()
+            self.sock = None
+
+    def createConnection(self) -> bool:
+        """
+        BLOCKING FUNCTION
+        """
+        try:
+            self.connection, client_address = self.sock.accept()
+            self.connection.settimeout(100)
+            self.oldTime = time.ticks_ms()
+        except OSError:
+            return False
+        return True
+
+    def closeConnection(self):
+        self.connection.close()
+
+    def getClientData(self, reciveCb):
+        try:
             buffer = self.connection.recv(LED_COL)
-            if len(buffer) == 0:
-                continue
-            b12 = buffer.decode()
-            ledsAmp = [int(s, LED_AMP) for s in b12]
-            reciveCb(ledsAmp)
+        except OSError as e:
+            if e.errno == 110:
+                return time.ticks_ms() - self.oldTime >= Server.CLIENT_DATA_TIMEOUT
+            raise
+        if len(buffer) == 0:
+            return time.ticks_ms() - self.oldTime >= Server.CLIENT_DATA_TIMEOUT
+        b12 = buffer.decode()
+        ledsAmp = [int(s, LED_AMP) for s in b12]
+        reciveCb(ledsAmp)
+        self.oldTime = time.ticks_ms()
+        return True
 
 
 def main():
-    wlan = initWifi()
-    wlan.connect(SSID, SSID_KEY)
-
+    wifi = Wifi()
     leds = LED_Strip()
-    statusHandler = StatusLed()
+    status = StatusLed()
     server = Server()
+    status.setCBfunc(StatusLed.CONNECTED, leds.statusCONNECTED_CB)
 
     while True:
-        if not wlan.isconnected():
-            if statusHandler.status == StatusLed.CONNECTING:
+        if status.status == StatusLed.NO_WIFI:
+            wifiConnected = wifi.connect()
+            if wifiConnected:
+                server.createSocket()
+                status.setStatus(StatusLed.NO_SOCKET)
                 continue
-            statusHandler.setStatus(StatusLed.CONNECTING)
-            Timer(period=5000, mode=Timer.ONE_SHOT,
-                  callback=lambda t: wlanConnectCB(wlan, statusHandler))
-            continue
-        statusHandler.setStatus(StatusLed.CONNECTED)
+            time.sleep(5)
 
-        print(f'Server:{server.getLED_Amp(leds.AmplitudesToLEDs)}')
+        elif status.status == StatusLed.NO_SOCKET:
+            socketConnected = server.createConnection()
+            if socketConnected:
+                status.setStatus(StatusLed.CONNECTED)
+            if not wifi.isconnected():
+                server.closeSocket()
+                status.setStatus(StatusLed.NO_WIFI)
+
+        elif status.status == StatusLed.CONNECTED:
+            clientAlive = server.getClientData(leds.AmplitudesToLEDs)
+            if not clientAlive:
+                server.closeConnection()
+                status.setStatus(StatusLed.NO_SOCKET)
 
 
 main()

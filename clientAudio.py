@@ -82,7 +82,7 @@ if __name__ == "__main__":
         frames_per_buffer = pyaudio.get_sample_size(pyaudio.paInt16)
         READ_FREQUENCY = 10
         CHUNK = RATE // READ_FREQUENCY  # RATE / number of updates per second
-        RECORD_SECONDS = 200
+        RECORD_SECONDS = 1
         nBars = 10
         fMax = 6e3
         maxIndex = (CHUNK * fMax) // RATE
