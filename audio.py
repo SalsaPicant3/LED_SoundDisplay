@@ -11,7 +11,7 @@ import numpy as np
 import time
 import wave
 import matplotlib.pyplot as plt
-
+from threading import Thread
 
 # open stream
 FORMAT = pyaudio.paInt16
@@ -26,9 +26,21 @@ x = 0
 # use a Blackman window
 
 
-def soundPlot(stream, ax1, ax2, ax3, CHUNK, RATE):
+def wantedF2Index(fftTime):
+    a = []
+    wantedF = [0, 32, 64, 125, 250, 500, 1000, 2000, 4000, 8000]
+    for i, f in enumerate(fftTime):
+        if f > wantedF[len(a)]:
+            a.append(i)
+            if len(a) == len(wantedF):
+                return a
+
+
+def ampTuned(x): return min(12, 12*x/(20000 + x))
+
+
+def soundPlot(data, ax1, ax2, ax3, ax4, CHUNK, RATE):
     t1 = time.time()
-    data = stream.read(CHUNK)
     npArrayData = np.fromstring(data, dtype=np.int16)
     indata = npArrayData
     # Plot time domain
@@ -39,12 +51,25 @@ def soundPlot(stream, ax1, ax2, ax3, CHUNK, RATE):
     fftData = np.abs(np.fft.rfft(indata))  # Max freq es CHUNK
     fftData = fftData[:fftData.shape[0]//2+1]
     fftTime = np.fft.rfftfreq(CHUNK, 1./RATE)
-    print(fftTime[-1])
     # Plot frequency domain graph
     ax2.cla()
     ax2.plot(fftTime, fftData)
     ax2.grid()
     ax2.axis([0, 6000, 0, 10**6])
+    nBars = 10
+    splitIndex = wantedF2Index(fftTime)
+    splitedFFT = np.split(fftData, splitIndex)
+    MAX_Amp = 1e5
+    avgFFT = np.array([np.max(i) for i in splitedFFT[1:]])
+    ax3.cla()
+    ax3.bar([i for i in range(int(nBars))], avgFFT/MAX_Amp)
+    ax3.grid()
+    ax3.axis([0, nBars, 0, 15])
+    ax4.cla()
+    ax4.bar([i for i in range(int(nBars))], [ampTuned(x) for x in avgFFT])
+    ax4.grid()
+    ax4.axis([0, nBars, 0, 12])
+
     plt.pause(0.0001)
     print("took %.02f ms" % ((time.time()-t1)*1000))
 
@@ -98,12 +123,16 @@ if __name__ == "__main__":
 
         plt.ion()
         fig = plt.figure(figsize=(10, 8))
-        ax1 = fig.add_subplot(311)
-        ax2 = fig.add_subplot(312)
-        ax3 = fig.add_subplot(313)
+        ax1 = fig.add_subplot(411)
+        ax2 = fig.add_subplot(412)
+        ax3 = fig.add_subplot(413)
+        ax4 = fig.add_subplot(414)
 
         for i in range(0, int(RATE / CHUNK * RECORD_SECONDS)):
-            soundPlot(stream, ax1, ax2, ax3,  CHUNK, RATE)
+            data = stream.read(CHUNK)
+            a = Thread(target=soundPlot, args=(
+                data, ax1, ax2, ax3, ax4,  CHUNK, RATE,))
+            a.run()
 
         stream.stop_stream()
         stream.close()
